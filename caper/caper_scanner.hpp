@@ -156,7 +156,7 @@ public:
                     case ']': pop_paren(stack, c); ss << char(c); break;
                     case eof: throw mismatch_paren(addr_, c);
                     default:
-                        if (c == '*' || c == ':' || c == ',' || c == '_' ||
+                        if (c == '*' || c == ':' || c == ',' || c == '_' || c == '.' ||
                             isspace(c)|| isalpha(c)|| isdigit(c)) {
                             ss << char(c);
                             break;
