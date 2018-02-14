@@ -126,6 +126,8 @@ make_lalr_table(
     typedef rule<Token, Traits>                         rule_type; 
     typedef lr0_collection<Token, Traits>               lr0_collection_type; 
     typedef symbol_set<Token, Traits>                   symbol_set_type; 
+    typedef terminal_set<Token, Traits>                 terminal_set_type; 
+    typedef nonterminal_set<Token, Traits>              nonterminal_set_type; 
     typedef core<Token, Traits>                         core_type; 
     typedef item<Token, Traits>                         item_type; 
     typedef item_set<Token, Traits>                     item_set_type; 
@@ -137,18 +139,28 @@ make_lalr_table(
     typedef typename state_type::propagate_type         propagate_type;
 
     // 記号の収集
-    symbol_set_type terminals;    
-    symbol_set_type nonterminals;    
+    terminal_set_type terminals;    
+    nonterminal_set_type nonterminals;    
     symbol_set_type all_symbols;
     collect_symbols(terminals, nonterminals, all_symbols, g);
 
+    terminal_type dummy("#", Token(-1));
+    terminals.insert(dummy);
+    all_symbols.insert(dummy);
+
+    terminal_type eof("$", Traits::eof());
+    terminals.insert(eof);
+    all_symbols.insert(eof);
+        
     // 接続チェック
     check_reachable(g);
 
     // FIRST, FOLLOWの作成
     first_collection<Token, Traits> first;
+    make_first(first, terminals, g);
+
     follow_collection<Token, Traits> follow;
-    make_first_and_follow(first, follow, terminals, nonterminals, all_symbols, g);
+    make_follow(follow, first, g, eof);
 
     // 表の作成
     table.set_grammar(g);
@@ -186,8 +198,7 @@ make_lalr_table(
 
         if (s.kernel.count(root_core)) {
             table.first_state(s.no);
-            s.generate_map[root_core].insert(
-                terminal_type("$", Traits::eof()));
+            s.generate_map[root_core].insert(eof);
         }
     }
 
@@ -216,8 +227,6 @@ make_lalr_table(
     // we determined in step(2) were generated spontaneously.
 
     // determine lookahead p.296
-    terminal_type dummy("#", Token(-1));
-
     for (auto& s: states) {
         for (const auto& k: s.kernel) {
             item_set_type J;
@@ -236,7 +245,7 @@ make_lalr_table(
                     if (!(l.rule() == j.rule())) { continue; }
                     if (l.cursor() != j.cursor()+ 1) { continue; }
 
-                    if (j.lookahead() == symbol_type(dummy)) {
+                    if (j.lookahead() == dummy) {
                         // 先読み伝播
                         s.propagate_map[k].insert(
                             std::make_pair(goto_state, l));
@@ -269,11 +278,11 @@ make_lalr_table(
                 auto f1 = s.propagate_map.find(j);
                 if (f1 == s.propagate_map.end()) { continue; }
 
-                const symbol_set_type& sg = (*f0).second;
+                const terminal_set_type& sg = (*f0).second;
                 const propagate_type& propagate = (*f1).second;
 
                 for (const auto& k: propagate) {
-                    symbol_set_type& dg =
+                    terminal_set_type& dg =
                         states[k.first].generate_map[k.second];
 
                     size_t n = dg.size();
@@ -375,7 +384,7 @@ make_lalr_table(
         // すなわち、goto(I(i),A)=I(j)であれば、goto[i,A]=jとする。
         for (const auto& A: nonterminals) {
             item_set_type gt2;
-            make_lr1_goto(gt2, s.items, A, first, g);
+            make_lr1_goto(gt2, s.items, symbol_type(A), first, g);
 
             core_set_type gt;
             items_to_cores(gt, gt2);

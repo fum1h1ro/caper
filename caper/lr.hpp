@@ -27,7 +27,13 @@ namespace gr {
  *
  *==========================================================================*/
 
-template < class D, class S > inline void merge_sets( D& x, const S& y ) { x.insert( y.begin(), y.end() ); }
+template < class D, class S > inline
+bool
+merge_sets( D& x, const S& y ) {
+    size_t x_size = x.size();
+    x.insert( y.begin(), y.end() );
+    return x.size() != x_size;
+}
 
 /*============================================================================
  *
@@ -112,15 +118,17 @@ std::ostream& operator<<(std::ostream& os, const core<Token, Traits>& y) {
 template <class Token, class Traits>
 class item {
 public:
-    typedef zw::gr::core<Token, Traits>   core_type;
-    typedef zw::gr::item<Token, Traits>   self_type;
-    typedef zw::gr::symbol<Token, Traits> symbol_type;
-    typedef zw::gr::rule<Token, Traits>   rule_type;
+    typedef zw::gr::core<Token, Traits>     core_type;
+    typedef zw::gr::item<Token, Traits>     self_type;
+    typedef zw::gr::symbol<Token, Traits>   symbol_type;
+    typedef zw::gr::terminal<Token, Traits> terminal_type;
+    typedef zw::gr::rule<Token, Traits>     rule_type;
 
 public:
-    item(const rule_type& r, int c, const symbol_type& s)
+    item(const rule_type& r, int c, const terminal_type& s)
         : core_(r, c), lookahead_(s) {}
-    item(const core_type& x, const symbol_type& y) : core_(x), lookahead_(y) {}
+    item(const core_type& x, const terminal_type& y)
+        : core_(x), lookahead_(y) {}
     item(const self_type& x) : core_(x.core_), lookahead_(x.lookahead_) {}
 
     self_type& operator=(const self_type& x) {
@@ -129,8 +137,8 @@ public:
         return *this;
     }
 
-    const core_type& core() const           { return core_; }
-    const symbol_type& lookahead() const    { return lookahead_; }
+    const core_type&        core() const    { return core_; }
+    const terminal_type& lookahead() const  { return lookahead_; }
 
     int                     id() const      { return core_.id(); }
     const rule_type&        rule() const    { return core_.rule(); }
@@ -145,9 +153,24 @@ public:
         return lookahead_.cmp(y.lookahead_);
     }
 
+public:
+    struct hash {
+        size_t operator()(const item<Token, Traits>& s) const {
+            // large prime numbers
+            const int p1 = 73856093;
+            const int p2 = 19349663;
+            const int p3 = 83492791;
+            
+            return
+                p1 * s.id() +
+                p2 * s.cursor() +
+                p3 * s.lookahead().token();
+        }
+    };
+
 private:
-    core_type   core_;
-    symbol_type lookahead_;
+    core_type       core_;
+    terminal_type   lookahead_;
 
 };
 
@@ -222,7 +245,7 @@ std::ostream& operator<<(std::ostream& os, const core_set<Token, Traits>& s) {
  *==========================================================================*/
 
 template <class Token, class Traits>
-class item_set : public std::set<item<Token, Traits>> {
+class item_set : public std::unordered_set<item<Token, Traits>, typename item<Token, Traits>::hash> {
 };
 
 template <class Token, class Traits>
@@ -343,8 +366,8 @@ std::ostream& operator<<(std::ostream& os, const lr1_collection<Token, Traits>& 
 
 template <class Token, class Traits>
 void collect_symbols(
-    symbol_set<Token, Traits>&      terminals,
-    symbol_set<Token, Traits>&      nonterminals,
+    terminal_set<Token, Traits>&    terminals,
+    nonterminal_set<Token, Traits>& nonterminals,
     symbol_set<Token, Traits>&      all_symbols,
     const grammar<Token, Traits>&   g) {
 
@@ -352,8 +375,8 @@ void collect_symbols(
         nonterminals.insert(rule.left());
         all_symbols.insert(rule.left());
         for (const auto& x: rule.right()) {
-            if (x.is_terminal()) { terminals.insert(x); }
-            if (x.is_nonterminal()) { nonterminals.insert(x); }
+            if (x.is_terminal()) { terminals.insert(x.as_terminal()); }
+            if (x.is_nonterminal()) { nonterminals.insert(x.as_nonterminal()); }
             all_symbols.insert(x); 
         }
     }
@@ -368,32 +391,20 @@ void collect_symbols(
  *==========================================================================*/
 
 template <class Token, class Traits>
-bool all_nullable(
-    const std::unordered_set<symbol<Token, Traits>, typename symbol<Token, Traits>::hash>& nullable,
-    const std::vector<symbol<Token, Traits>>&    rule_right,
-    int b, int e) {
-    bool flag = true;
-    for (int j = b ; j <e ; j++) {
-        const auto& s = rule_right[j];
-        if (s.is_epsilon()) { continue; }
-
-        if (nullable.count(s) == 0) {
-            flag = false;
-            break;
-        }
-    }
-    return flag;
+bool is_nullable(
+    const symbol_set<Token, Traits>&    nullable,
+    const symbol<Token, Traits>&        s) {
+    return s.is_epsilon() || 0 < nullable.count(s);
 }
 
 template <class Token, class Traits>
-void make_first_and_follow(
+void make_first(
     first_collection<Token, Traits>&    first,
-    follow_collection<Token, Traits>&   follow,
-    const symbol_set<Token, Traits>&    terminals,
-    const symbol_set<Token, Traits>&,
-    const symbol_set<Token, Traits>&,
+    const terminal_set<Token, Traits>&  terminals,
     const grammar<Token, Traits>&       g) {
     typedef symbol_set<Token, Traits>     symbol_set_type;
+
+    // firstの値は terminal | epsilon (nonterminalはありえない)
 
     // nullable
     symbol_set_type nullable;
@@ -403,70 +414,59 @@ void make_first_and_follow(
         first[x].insert(x);
     }
 
-    // repeat until FIRST, FOLLOW,
-    // and nullable did not change in this iteration.
-    bool repeat = true;
-    while (repeat) {
+    // repeat until FIRST and nullable did not change in this iteration.
+    bool repeat;
+    do {
         repeat = false;
 
         // for each production X -> Y1Y2...Yk
         for (const auto& rule: g) {
             // if Y1...Yk are all nullable(or if k = 0)
-            int k = int(rule.right().size());
-            if (all_nullable(nullable, rule.right(), 0, k)) {
-                // nullable[X] = true
-                if (!nullable.count(rule.left())) {
-                    repeat = true; 
-                    nullable.insert(rule.left());
+            for (const auto& e: rule.right()) {
+                repeat = repeat || merge_sets(first[rule.left()], first[e]);
+                if (!is_nullable(nullable, e)) {
+                    goto next;
                 }
             }
+            repeat = repeat || nullable.insert(rule.left()).second;
 
-            // for each i from 1 to k, each j from i + 1 to k
-            for (int i = 0 ; i < k ; i++) {
-                // if Y1...Yi-1 are all nullable(or if i = 1)
-                if (all_nullable(nullable, rule.right(), 0, i)) {
-                    // then FIRST[X] = FIRST[X] unify FIRST[Yi]
-                    symbol_set_type s = first[rule.left()];
-                    merge_sets(s, first[rule.right()[i]]);
-
-                    if (first[rule.left()] != s) {
-                        repeat = true;
-                        first[rule.left()] = s;
-                    }
-                }
-                // if Yi+1...Yk are all nullable(or if i = k)
-                if (all_nullable(nullable, rule.right(), i+1, k)) {
-                    // then FOLLOW[Yi] = FOLLOW[Yi] unify FOLLOW[X]
-                    symbol_set_type s = follow[rule.right()[i]];
-                    merge_sets(s, follow[rule.left()]);
-
-                    if (follow[rule.right()[i]] != s) {
-                        repeat = true;
-                        follow[rule.right()[i]] = s;
-                    }
-                }
-
-                for (int j = i+1 ; j < k ; j++) {
-                    // if Yi+1...Yj-1 are all nullable(or if i+1 = j)
-                    // then FOLLOW[Yi] = FOLLOW[Yi] unify FIRST[Yj]
-                    if (all_nullable(nullable, rule.right(), i+1, j)) {
-                        symbol_set_type s = follow[rule.right()[i]];
-                        merge_sets(s, first[rule.right()[j]]);
-
-                        if (follow[rule.right()[i]] != s) {
-                            repeat = true;
-                            follow[rule.right()[i]] = s;
-                        }
-                    }
-                }
-            }
-
+          next:
+            ;
         }
-    }
+    } while(repeat);
 
     for (const auto& x: nullable) {
         first[x].insert(epsilon<Token, Traits>());
     }
+}
+
+template <class Token, class Traits, class It>
+void make_range_first(
+    symbol_set<Token, Traits>&              s,
+    const first_collection<Token, Traits>&  first,
+    It                                      b,
+    It                                      e) {
+
+    // n番目の要素にepsilonが含まれている場合、
+    // n+1番目の要素も追加する
+
+    for (auto i = b ; i != e ; ++i) {
+        auto j = first.find(*i);
+        assert(j != first.end());
+
+        bool trail = false;
+        for (const auto& k: (*j).second) {
+            assert(!k.is_nonterminal());
+            if (k.is_epsilon()) {
+                trail = true;
+            } else {
+                s.insert(k.as_terminal());
+            }
+        }
+        if (!trail) { return; }
+    }
+
+    s.insert(epsilon<Token, Traits>());
 }
 
 template <class Token, class Traits>
@@ -475,31 +475,53 @@ void make_vector_first(
     const first_collection<Token, Traits>&      first,
     const std::vector<symbol<Token, Traits>>&   v) {
 
-    bool next = false;
-    for (const auto& x: v) {
-        next = false;
+    make_range_first(s, first, v.begin(), v.end());
+}
 
-        if (x.is_terminal()) {
-            s.insert(x);
-            return;
-        }
+template <class Token, class Traits>
+void make_follow(
+    follow_collection<Token, Traits>&       follow,
+    const first_collection<Token, Traits>&  first,
+    const grammar<Token, Traits>&           g,
+    const terminal<Token, Traits>&          eof) {
 
-        auto j = first.find(x);
-        assert(j != first.end());
+    typedef symbol_set<Token, Traits>   symbol_set_type;
 
-        for (const auto& k: (*j).second) {
-            if (k.is_epsilon()) {
-                next = true;
-            } else {
-                s.insert(k);
+    // nullable
+    follow[g.root_rule().left()].insert(eof);
+
+    // repeat until FOLLOW and nullable did not change in this iteration.
+    bool repeat;
+    do {
+        repeat = false;
+
+        // for each production X -> Y1Y2...Yk
+        for (const auto& rule: g) {
+            const auto& follow_a = follow[rule.left()];
+            const auto& right = rule.right();
+
+            // if Y1...Yk are all nullable(or if k = 0)
+            size_t right_size = right.size();
+            for (size_t i = 0 ; i < right_size ; i++) {
+                auto& follow_b = follow[right[i]];
+
+                symbol_set_type s;
+                make_range_first(s, first, right.begin() + 1, right.end());
+
+                bool trail = false;
+                for (const auto& k: s) {
+                    if (k.is_epsilon()) {
+                        trail = true;
+                    } else {
+                        repeat = repeat || follow_b.insert(k).second;
+                    }
+                }
+                if (trail) {
+                    repeat = repeat || merge_sets(follow_b, follow_a);
+                }
             }
         }
-        if (!next) { break; }
-    }
-
-    if (next) {
-        s.insert(epsilon<Token, Traits>());
-    }
+    } while(repeat);
 }
 
 /*============================================================================
@@ -535,8 +557,7 @@ make_lr0_closure(
             if (!y.is_nonterminal()) { continue; }
             if (added.find(y.identity()) != added.end()) { continue; }
 
-            for (const rule_type& z:
-                     (*g.dictionary().find(y.identity())).second) {
+            for (const rule_type& z: g.dictionary().at(y.identity())) {
                 new_cores.insert(core_type(z, 0)); 
             }
             added.insert(y.identity());
@@ -589,20 +610,27 @@ make_lr1_closure(
     item_set<Token, Traits>&                      J,
     const first_collection<Token, Traits>&        first,
     const grammar<Token, Traits>&                 g) {
+
     typedef symbol<Token, Traits>               symbol_type;
+    typedef terminal<Token, Traits>             terminal_type;
     typedef rule<Token, Traits>                 rule_type;
     typedef item<Token, Traits>                 item_type;
     typedef symbol_set<Token, Traits>           symbol_set_type;
+    typedef terminal_set<Token, Traits>         terminal_set_type;
     typedef item_set<Token, Traits>             item_set_type;
     typedef std::vector<symbol<Token, Traits>>  symbol_vector_type;
 
-    size_t J_size;
-    do {
+    item_set_type Jdash = J; // 次のイテレーションでソースにする項
+
+    static int call_count = 0;
+    
+    //std::cerr << "make_lr1_closure start: " << call_count << std::endl;
+    call_count++;
+    while(true) {
+        //std::cerr << "J.size() = " << J.size() << ", Jdash.size() = " << Jdash.size() << std::endl;
         item_set_type new_items;  // 挿入する項
 
-        J_size = J.size();
-
-        for (const item_type& x: J) {
+        for (const item_type& x: Jdash) {
             // x is [item(A→α・Bβ, a)]
             if (x.over()) { continue; }
 
@@ -620,19 +648,28 @@ make_lr1_closure(
             symbol_set_type f;
             make_vector_first(f, first, v); 
 
-            for (const rule_type& z:
-                     (*g.dictionary().find(y.identity())).second) {
+            for (const rule_type& z: g.dictionary().at(y.identity())) {
                 // z is [rule(B→γ)]
 
                 // 各lookahead
                 for (const symbol_type& s: f) {
-                    new_items.insert(item_type(z, 0, s));
+                    assert(!s.is_nonterminal());
+                    if (s.is_terminal()) {
+                        item_type item(z, 0, s.as_terminal());
+                        if (J.count(item) == 0) {
+                            new_items.insert(item);
+                        }
+                    }
                 }
             }
         }
 
-        merge_sets(J, new_items);
-    } while (J_size != J.size());
+        if (!merge_sets(J, new_items)) {
+            break;
+        }
+        Jdash.swap(new_items);
+    }
+    //std::cerr << "make_lr1_closure done" << std::endl;
 }
 
 /*============================================================================
@@ -787,6 +824,7 @@ public:
     typedef parsing_table<Token,Traits> self_type;
     typedef symbol<Token, Traits>       symbol_type;
     typedef symbol_set<Token, Traits>   symbol_set_type;
+    typedef terminal_set<Token, Traits> terminal_set_type;
     typedef grammar<Token, Traits>      grammar_type;
     typedef rule<Token, Traits>         rule_type;
     typedef core<Token, Traits>         core_type; 
@@ -809,7 +847,7 @@ public:
         typedef core_set<Token, Traits>                 core_set_type;
         typedef std::map<Token, action>                 action_table_type;
         typedef std::map<symbol_type, int>              goto_table_type; // index to states_
-        typedef std::map<core_type, symbol_set_type>    generate_map_type;
+        typedef std::map<core_type, terminal_set_type>  generate_map_type;
         typedef std::set<std::pair<int, core_type>>     propagate_type;
         typedef std::map<core_type, propagate_type>     propagate_map_type;
 
@@ -925,7 +963,7 @@ template <class Token, class Traits>
 struct null_reporter {
     typedef rule<Token, Traits> rule_type;
 
-    void operator()(const rule_type&, const rule_type& y) {
+    void operator()(const rule_type&, const rule_type&) {
         // do nothing
     }
 };

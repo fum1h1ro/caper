@@ -1,18 +1,11 @@
+# Makefile for MinGW-builds
 CXX = g++
-CXXFLAGS = -Wall -static -std=c++11 -O9 --input-charset=cp932 -IC:\local\boost_1_55_0
-#CXXFLAGS = -Wall -static -std=c++11 -O9 --input-charset=cp932 -IC:\local\boost_1_55_0 -pg
+CXXFLAGS = -Wall -static -std=c++11 -O9 --input-charset=cp932 -I/c/local/boost_1_56_0 -L/c/local/boost_1_56_0/stage/lib
+#CXXFLAGS = -Wall -static -std=c++11 -O9 --input-charset=cp932 -I/c/local/boost_1_56_0 -L/c/local/boost_1_56_0/stage/lib -pg
 TARGET = caper
-OBJS = \
-	caper.o \
-	caper_cpg.o \
-	caper_tgt.o \
-	caper_generate_cpp.o \
-	caper_generate_d.o \
-	caper_generate_csharp.o \
-	caper_generate_js.o \
-	caper_generate_java.o \
-	caper_generate_boo.o \
-	caper_stencil.o
+OBJS		= $(TARGET).o caper_cpg.o caper_tgt.o caper_generate_cpp.o caper_generate_d.o \
+	caper_generate_csharp.o caper_generate_js.o caper_generate_java.o caper_generate_boo.o \
+	caper_generate_ruby.o caper_generate_php.o caper_generate_haxe.o caper_stencil.o
 
 HEADERS = \
 	lr.hpp \
@@ -33,10 +26,13 @@ TOP_HEADERS = \
 	caper_generate_d.hpp \
 	caper_generate_java.hpp \
 	caper_generate_boo.hpp \
+	caper_generate_ruby.hpp \
+	caper_generate_php.hpp \
+	caper_generate_haxe.hpp \
 	caper_format.hpp
 
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $(OBJS) -lboost_filesystem -lboost_system
+	$(CXX) $(CXXFLAGS) -o $@ $(OBJS) -lboost_filesystem-mgw48-mt-s-1_56 -lboost_system-mgw48-mt-s-1_56
 
 caper.o: $(TOP_HEADERS) caper.cpp
 	$(CXX) $(CXXFLAGS) -c -o $@ caper.cpp
@@ -56,6 +52,12 @@ caper_generate_java.o: $(HEADERS) caper_generate_java.hpp caper_generate_java.cp
 	$(CXX) $(CXXFLAGS) -c -o $@ caper_generate_java.cpp
 caper_generate_boo.o: $(HEADERS) caper_generate_boo.hpp caper_generate_boo.cpp
 	$(CXX) $(CXXFLAGS) -c -o $@ caper_generate_boo.cpp
+caper_generate_ruby.o: $(HEADERS) caper_generate_ruby.hpp caper_generate_ruby.cpp
+	$(CXX) $(CXXFLAGS) -c -o $@ caper_generate_ruby.cpp
+caper_generate_php.o: $(HEADERS) caper_generate_php.hpp caper_generate_php.cpp
+	$(CXX) $(CXXFLAGS) -c -o $@ caper_generate_php.cpp
+caper_generate_haxe.o: $(HEADERS) caper_generate_haxe.hpp caper_generate_haxe.cpp
+	$(CXX) $(CXXFLAGS) -c -o $@ caper_generate_haxe.cpp
 caper_stencil.o: $(HEADERS) caper_stencil.hpp caper_stencil.cpp
 	$(CXX) $(CXXFLAGS) -c -o $@ caper_stencil.cpp
 

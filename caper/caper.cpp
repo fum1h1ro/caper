@@ -21,6 +21,9 @@ using std::exit;
 #include "caper_generate_d.hpp"
 #include "caper_generate_java.hpp"
 #include "caper_generate_boo.hpp"
+#include "caper_generate_ruby.hpp"
+#include "caper_generate_php.hpp"
+#include "caper_generate_haxe.hpp"
 #include <sstream>
 #include <fstream>
 #include <iostream>
@@ -80,6 +83,20 @@ void get_commandline_options(
                 cmdopt.language = "Boo";
                 continue;
             }
+            if (arg == "-rb" || arg == "-RB" ||
+                arg == "-ruby" || arg == "-Ruby" || arg == "-RUBY") {
+                cmdopt.language = "Ruby";
+                continue;
+            }
+            if (arg == "-php" || arg == "-PHP") {
+                cmdopt.language = "PHP";
+                continue;
+            }
+            if (arg == "-haxe" || arg == "-HAXE" || arg == "-Haxe" ||
+                arg == "-haXe" || arg == "-hx" || arg == "-HX") {
+                cmdopt.language = "Haxe";
+                continue;
+            }
             if (arg == "-lalr1") {
                 cmdopt.algorithm = "lalr1";
                 continue;
@@ -110,7 +127,7 @@ void get_commandline_options(
     }
 
     if (state < 2) {
-        std::cerr << "caper: usage: caper [-c++ | -js | -cs | -java | -boo] input_filename output_filename" << std::endl;
+        std::cerr << "caper: usage: caper [-c++ | -js | -cs | -d | -java | -boo | -ruby | -php | -haxe] input_filename output_filename" << std::endl;
         exit(1);
     }
 
@@ -131,12 +148,15 @@ int main(int argc, const char** argv) {
         const tgt::parsing_table&);
 
     std::unordered_map<std::string, generator_type> generators;
-    generators["Java"]          = generate_java;
-    generators["C#"]            = generate_csharp;
     generators["C++"]           = generate_cpp;
     generators["JavaScript"]    = generate_javascript;
+    generators["C#"]            = generate_csharp;
     generators["D"]             = generate_d;
+    generators["Java"]          = generate_java;
     generators["Boo"]           = generate_boo;
+    generators["Ruby"]          = generate_ruby;
+    generators["PHP"]           = generate_php;
+    generators["Haxe"]          = generate_haxe;
 
     std::ifstream ifs(cmdopt.infile.c_str());
     if (!ifs) {

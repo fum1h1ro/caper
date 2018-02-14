@@ -41,7 +41,8 @@ std::string make_arg_decl(const Type& x, size_t l, const std::string& smart_poin
     std::string y = make_type_name(x, smart_pointer_tag) + " arg" + sl;
     switch (x.extension) {
         case Extension::None:
-            return y;
+            assert(0);
+            return "";
         case Extension::Star:
         case Extension::Plus:
         case Extension::Question:
@@ -72,6 +73,29 @@ void make_signature(
     for (const auto& arg: sa.args) {
         signature.push_back(make_type_name(arg.type, smart_pointer_tag));
     }
+}
+
+std::string normalize_internal_sa_name(const std::string& s) {
+    std::string r;
+    for(auto c: s) {
+        if (c == '<' || c == '>') {
+            r += "__";
+        } else {
+            r += c;
+        }
+    }
+    return r;
+}
+
+std::string normalize_sa_call(const std::string& s) {
+    std::string prefix;
+    for(auto c: s) {
+        if (c == '<' || c == '>') {
+            prefix = "template ";
+            break;
+        }
+    }
+    return prefix + s;
 }
 
 } // unnamed namespace
@@ -402,16 +426,17 @@ private:
     // parser class header
     stencil(
         os, R"(
-template <${token_parameter}class Value, class SemanticAction,
-          unsigned int StackSize = ${default_stack_size}>
+template <${token_parameter}class _Value, class _SemanticAction,
+          unsigned int _StackSize = ${default_stack_size}>
 class Parser {
 public:
-    typedef Token token_type;
-    typedef Value value_type;
+    typedef ${token_source} token_type;
+    typedef _Value value_type;
 
     enum Nonterminal {
 )",
-        {"token_parameter", options.external_token ? "class Token, " : ""},
+        {"token_parameter", options.external_token ? "class _Token, " : ""},
+        {"token_source", options.external_token ? "_Token" : "Token"},
         {"default_stack_size", options.dont_use_stl ? "1024" : "0"}
         );
 
@@ -429,7 +454,7 @@ public:
     };
 
 public:
-    Parser(SemanticAction& sa) : sa_(sa) { reset(); }
+    Parser(_SemanticAction& sa) : sa_(sa) { reset(); }
 
     void reset() {
         error_ = false;
@@ -474,7 +499,7 @@ public:
     stencil(
         os, R"(
 private:
-    typedef Parser<${token_paremter}Value, SemanticAction, StackSize> self_type;
+    typedef Parser<${token_paremter}_Value, _SemanticAction, _StackSize> self_type;
 
     typedef bool (self_type::*state_type)(token_type, const value_type&);
     typedef int (self_type::*gotof_type)(Nonterminal);
@@ -482,7 +507,7 @@ private:
     bool            accepted_;
     bool            error_;
     value_type      accepted_value_;
-    SemanticAction& sa_;
+    _SemanticAction& sa_;
 
     struct table_entry {
         state_type  state;
@@ -500,13 +525,13 @@ private:
     };
 
 )",
-        {"token_paremter", options.external_token ? "Token, " : ""}
+        {"token_paremter", options.external_token ? "_Token, " : ""}
         );
 
     // stack operation
     stencil(
         os, R"(
-    Stack<stack_frame, StackSize> stack_;
+    Stack<stack_frame, _StackSize> stack_;
 
     bool push_stack(int state_index, const value_type& v, int sl = 0) {
         bool f = stack_.push(stack_frame(entry(state_index), v, sl));
@@ -566,7 +591,7 @@ $${pop_stack_implementation}
     if (options.recovery) {
         stencil(
             os, R"(
-    void recover(Token token, const value_type& value) {
+    void recover(token_type token, const value_type& value) {
         rollback_tmp_stack();
         error_ = false;
 $${debmes:start}
@@ -639,7 +664,7 @@ $${debmes:repost_done}
     } else {
         stencil(
             os, R"(
-    void recover(Token, const value_type&) {
+    void recover(token_type, const value_type&) {
     }
 
 )"
@@ -660,10 +685,10 @@ $${debmes:repost_done}
     template <class T>
     class Optional {
     public:
-        typedef Stack<stack_frame, StackSize> stack_type;
+        typedef Stack<stack_frame, _StackSize> stack_type;
 
     public:
-        Optional(SemanticAction& sa, stack_type& s, const Range& r)
+        Optional(_SemanticAction& sa, stack_type& s, const Range& r)
             : sa_(&sa), s_(&s), p_(r.beg == r.end ? -1 : r.beg){}
 
         operator bool() const {
@@ -673,13 +698,13 @@ $${debmes:repost_done}
             return !bool(*this);
         }
         T operator*() const {
-            value_type v;
+            T v;
             sa_->downcast(v, s_->nth(p_).value);
             return v;
         }
 
     private:
-        SemanticAction* sa_;
+        _SemanticAction* sa_;
         stack_type*     s_;
         int             p_;
 
@@ -688,14 +713,18 @@ $${debmes:repost_done}
     template <class T>
     class Sequence {
     public:
-        typedef Stack<stack_frame, StackSize> stack_type;
+        typedef Stack<stack_frame, _StackSize> stack_type;
 
         class const_iterator {
         public:
-            typedef T value_type;
+            typedef T                       value_type;
+            typedef std::input_iterator_tag iterator_category;
+            typedef value_type              reference;
+            typedef value_type*             pointer;
+            typedef size_t                  difference_type;
 
         public:
-            const_iterator(SemanticAction& sa, stack_type& s, int p)
+            const_iterator(_SemanticAction& sa, stack_type& s, int p)
                 : sa_(&sa), s_(&s), p_(p){}
             const_iterator(const const_iterator& x) : s_(x.s_), p_(x.p_){}
             const_iterator& operator=(const const_iterator& x) {
@@ -720,14 +749,14 @@ $${debmes:repost_done}
                 return !((*this)==x);
             }
         private:
-            SemanticAction* sa_;
+            _SemanticAction* sa_;
             stack_type*     s_;
             int             p_;
 
         };
 
     public:
-        Sequence(SemanticAction& sa, stack_type& stack, const Range& r)
+        Sequence(_SemanticAction& sa, stack_type& stack, const Range& r)
             : sa_(sa), stack_(stack), range_(r) {
         }
 
@@ -739,7 +768,7 @@ $${debmes:repost_done}
         }
 
     private:
-        SemanticAction& sa_;
+        _SemanticAction& sa_;
         stack_type&     stack_;
         Range           range_;
 
@@ -873,7 +902,7 @@ $${debmes:repost_done}
     bool call_${stub_index}_${sa_name}(Nonterminal nonterminal, int base${args}) {
 )",
                 {"stub_index", stub_index},
-                {"sa_name", sa.name},
+                {"sa_name", normalize_internal_sa_name(sa.name)},
                 {"args", [&](std::ostream& os) {
                         for (size_t l = 0 ; l < sa.args.size() ; l++) {
                             os << ", int arg_index" << l;
@@ -924,7 +953,7 @@ $${debmes:repost_done}
 
 )",
                 {"nonterminal_type", make_type_name(rule_type, options.smart_pointer_tag)},
-                {"semantic_action_name", sa.name},
+                {"semantic_action_name", normalize_sa_call(sa.name)},
                 {"args", [&](std::ostream& os) {
                         bool first = true;
                         for (size_t l = 0 ; l < sa.args.size() ; l++) {
@@ -1100,7 +1129,7 @@ $${debmes:state}
             return call_${index}_${sa_name}(Nonterminal_${nonterminal}, /*pop*/ ${base}${args});
 )",
                 {"index", index},
-                {"sa_name", signature[0]},
+                {"sa_name", normalize_internal_sa_name(signature[0])},
                 {"nonterminal", nonterminal_name},
                 {"base", base},
                 {"args", [&](std::ostream& os) {
